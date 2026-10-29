@@ -60,6 +60,7 @@ type routingRuntimeState struct {
 	sessionAffinityTTL       time.Duration
 	sessionAffinitySubagents bool
 	sessionAffinityRebindOn  string
+	soonestReset             coreauth.SoonestResetConfig
 }
 
 func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
@@ -78,6 +79,13 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 		state.strategy = "weighted-round-robin"
 	case "fill-first", "fillfirst", "ff":
 		state.strategy = "fill-first"
+	case "soonest-reset", "soonestreset", "sr":
+		state.strategy = "soonest-reset"
+		state.soonestReset = coreauth.SoonestResetConfig{
+			FiveHourLimit:   cfg.Routing.SoonestResetFiveHourLimit / 100,
+			TieMargin:       parsePositiveDuration(cfg.Routing.SoonestResetTieMargin),
+			RefreshInterval: parsePositiveDuration(cfg.Routing.SoonestResetRefreshInterval),
+		}
 	}
 	state.sessionAffinity = cfg.Routing.SessionAffinity
 	if ttl := strings.TrimSpace(cfg.Routing.SessionAffinityTTL); ttl != "" {
@@ -97,6 +105,16 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 	return state
 }
 
+// parsePositiveDuration returns zero for empty, invalid, or non-positive values so the
+// consumer applies its default.
+func parsePositiveDuration(value string) time.Duration {
+	parsed, errParse := time.ParseDuration(strings.TrimSpace(value))
+	if errParse != nil || parsed <= 0 {
+		return 0
+	}
+	return parsed
+}
+
 func newRoutingSelector(state routingRuntimeState) coreauth.Selector {
 	var selector coreauth.Selector
 	switch state.strategy {
@@ -104,6 +122,8 @@ func newRoutingSelector(state routingRuntimeState) coreauth.Selector {
 		selector = &coreauth.WeightedRoundRobinSelector{}
 	case "fill-first":
 		selector = &coreauth.FillFirstSelector{}
+	case "soonest-reset":
+		selector = coreauth.NewSoonestResetSelector(state.soonestReset)
 	default:
 		selector = &coreauth.RoundRobinSelector{}
 	}

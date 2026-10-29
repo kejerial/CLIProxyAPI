@@ -159,10 +159,23 @@ access:
 
 # Routing strategy for selecting credentials when multiple match.
 routing:
-  strategy: "round-robin" # round-robin (default), weighted-round-robin, fill-first
+  strategy: "round-robin" # round-robin (default), weighted-round-robin, fill-first, soonest-reset
   # weighted-round-robin uses each credential's integer weight (default 1, maximum 1,000,000).
   # Non-positive weights exclude the credential while this strategy is active.
   # For OAuth/file credentials, add a top-level numeric "weight" field to the auth JSON.
+  # soonest-reset uses the account whose weekly quota resets soonest first, because usage left
+  # at a weekly reset is lost. It reads the quota snapshot that Claude and Codex responses carry
+  # (shown as "quota" in the management auth-files list) and probes the provider usage API in
+  # the background for accounts whose snapshot is missing or older than the refresh interval.
+  # Accounts without quota data rank last; providers without quota data use round-robin.
+  # With session-affinity, a session keeps its account until that account is unavailable or
+  # its 5-hour window reaches the limit below, then moves once to the best account.
+  # 5-hour window usage percent at which an account is skipped. Default: 90
+  soonest-reset-five-hour-limit: 90
+  # Weekly resets closer together than this count as equal; more weekly usage left wins. Default: 6h
+  soonest-reset-tie-margin: "6h"
+  # Probe an account's usage when its quota snapshot is older than this. Default: 5m, minimum 1m
+  soonest-reset-refresh-interval: "5m"
   # Enable universal session-sticky routing for all clients.
   # Explicit Claude Code, Codex, OpenCode, and pi session headers are preferred,
   # followed by prompt_cache_key, Responses conversation IDs, legacy body IDs,

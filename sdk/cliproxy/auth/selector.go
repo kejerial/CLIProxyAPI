@@ -669,6 +669,19 @@ func positiveWeightAuths(auths []*Auth) []*Auth {
 	return weightedCandidates
 }
 
+// affinityCandidatesForFallback narrows the auths a session binding may use to the ones the
+// fallback selector itself accepts, so a bound auth the fallback rejects is rebound once.
+func affinityCandidatesForFallback(fallback Selector, auths []*Auth, now time.Time) []*Auth {
+	switch typed := fallback.(type) {
+	case *WeightedRoundRobinSelector:
+		return positiveWeightAuths(auths)
+	case *SoonestResetSelector:
+		return typed.eligibleAuths(auths, now)
+	default:
+		return auths
+	}
+}
+
 // Pick selects the next available auth using smooth weighted round-robin.
 func (s *WeightedRoundRobinSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
 	_ = opts
@@ -1141,10 +1154,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 		}
 	}
 	now := time.Now()
-	availabilityCandidates := auths
-	if _, weighted := s.fallback.(*WeightedRoundRobinSelector); weighted {
-		availabilityCandidates = positiveWeightAuths(auths)
-	}
+	availabilityCandidates := affinityCandidatesForFallback(s.fallback, auths, now)
 	if primaryID == "" {
 		fallbackAuths, errAvailable := getSelectorAvailableAuths(ctx, availabilityCandidates, provider, model, now)
 		if errAvailable != nil {
@@ -1314,11 +1324,8 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
 		opts.Metadata[cliproxyexecutor.LCPEnvironmentDigestMetadataKey] = envDigest
 	}
 
-	availabilityCandidates := auths
-	if _, weighted := s.fallback.(*WeightedRoundRobinSelector); weighted {
-		availabilityCandidates = positiveWeightAuths(auths)
-	}
 	now := time.Now()
+	availabilityCandidates := affinityCandidatesForFallback(s.fallback, auths, now)
 	available, errAvailable := getSelectorAvailableAuthsAcrossPriorities(ctx, availabilityCandidates, provider, model, now)
 	if errAvailable != nil {
 		return nil, true, errAvailable

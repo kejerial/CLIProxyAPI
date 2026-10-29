@@ -457,7 +457,7 @@ type QuotaExceeded struct {
 // RoutingConfig configures how credentials are selected for requests.
 type RoutingConfig struct {
 	// Strategy selects the credential selection strategy.
-	// Supported values: "round-robin" (default), "weighted-round-robin", "fill-first".
+	// Supported values: "round-robin" (default), "weighted-round-robin", "fill-first", "soonest-reset".
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
 
 	// SessionAffinity enables universal session-sticky routing for all clients.
@@ -487,6 +487,18 @@ type RoutingConfig struct {
 	//     auth errors (429, 401/402/403, 404/model support, invalid_grant) rebind as normal.
 	// Ignored when SessionAffinity is false.
 	SessionAffinityRebindOn string `yaml:"session-affinity-rebind-on,omitempty" json:"session-affinity-rebind-on,omitempty"`
+
+	// SoonestResetFiveHourLimit is the 5-hour window usage percent (1-100) at which the
+	// soonest-reset strategy skips an account. Default: 90. Ignored by other strategies.
+	SoonestResetFiveHourLimit float64 `yaml:"soonest-reset-five-hour-limit,omitempty" json:"soonest-reset-five-hour-limit,omitempty"`
+
+	// SoonestResetTieMargin treats weekly resets this close together as equal; the account
+	// with more weekly usage left wins. Default: 6h. Ignored by other strategies.
+	SoonestResetTieMargin string `yaml:"soonest-reset-tie-margin,omitempty" json:"soonest-reset-tie-margin,omitempty"`
+
+	// SoonestResetRefreshInterval is how old an account's quota snapshot may get before a
+	// background usage probe refreshes it. Default: 5m, minimum 1m. Ignored by other strategies.
+	SoonestResetRefreshInterval string `yaml:"soonest-reset-refresh-interval,omitempty" json:"soonest-reset-refresh-interval,omitempty"`
 }
 
 // OAuthModelAlias defines a model ID alias for a specific channel.
