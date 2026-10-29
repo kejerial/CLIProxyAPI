@@ -489,7 +489,8 @@ type RoutingConfig struct {
 	SessionAffinityRebindOn string `yaml:"session-affinity-rebind-on,omitempty" json:"session-affinity-rebind-on,omitempty"`
 
 	// SoonestResetFiveHourLimit is the 5-hour window usage percent (1-100) at which the
-	// soonest-reset strategy skips an account. Default: 90. Ignored by other strategies.
+	// soonest-reset strategy skips an account. A fraction such as 0.9 is also accepted.
+	// Default: 90. Ignored by other strategies.
 	SoonestResetFiveHourLimit float64 `yaml:"soonest-reset-five-hour-limit,omitempty" json:"soonest-reset-five-hour-limit,omitempty"`
 
 	// SoonestResetTieMargin treats weekly resets this close together as equal; the account

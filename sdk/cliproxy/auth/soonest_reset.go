@@ -26,8 +26,8 @@ const (
 
 // SoonestResetConfig configures the soonest-reset routing strategy.
 type SoonestResetConfig struct {
-	// FiveHourLimit is the 5-hour window usage fraction (0..1] at which an
-	// account is skipped. Zero selects the default (0.9).
+	// FiveHourLimit is the 5-hour window usage at which an account is skipped,
+	// as a fraction (0..1] or a percent (1..100]. Zero selects the default (0.9).
 	FiveHourLimit float64
 	// TieMargin treats weekly resets this close together as equal; the account
 	// with more weekly usage left wins the tie. Zero selects the default (6h).
@@ -38,6 +38,10 @@ type SoonestResetConfig struct {
 }
 
 func (c SoonestResetConfig) normalized() SoonestResetConfig {
+	if c.FiveHourLimit > 1 && c.FiveHourLimit <= 100 {
+		// Accept a percent as well as a fraction.
+		c.FiveHourLimit /= 100
+	}
 	if c.FiveHourLimit <= 0 || c.FiveHourLimit > 1 {
 		c.FiveHourLimit = defaultSoonestResetFiveHourLimit
 	}
@@ -61,8 +65,9 @@ type SoonestResetSelector struct {
 	cfg        SoonestResetConfig
 	roundRobin RoundRobinSelector
 
-	probeMu    sync.Mutex
-	lastProbes map[string]time.Time
+	probeMu        sync.Mutex
+	lastProbes     map[string]time.Time
+	inFlightProbes map[string]struct{}
 }
 
 // NewSoonestResetSelector builds a soonest-reset selector with defaults applied.
@@ -78,13 +83,15 @@ func (s *SoonestResetSelector) Config() SoonestResetConfig {
 	return s.cfg
 }
 
-// Pick selects the available auth whose weekly quota resets soonest.
+// Pick selects the available auth whose weekly quota resets soonest. Credential priority
+// applies among eligible auths: a nearly full account does not hold its priority tier.
 func (s *SoonestResetSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
 	now := time.Now()
-	available, err := getSelectorAvailableAuths(ctx, auths, provider, model, now)
+	available, err := getSelectorAvailableAuthsAcrossPriorities(ctx, auths, provider, model, now)
 	if err != nil {
 		return nil, err
 	}
+	available = highestPriorityAuths(s.eligibleAuths(available, now))
 	available = preferCodexWebsocketAuths(ctx, provider, available)
 	picked, noData := pickSoonestReset(available, now, s.cfg)
 	if picked != nil {

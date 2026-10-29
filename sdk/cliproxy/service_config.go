@@ -82,7 +82,7 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 	case "soonest-reset", "soonestreset", "sr":
 		state.strategy = "soonest-reset"
 		state.soonestReset = coreauth.SoonestResetConfig{
-			FiveHourLimit:   cfg.Routing.SoonestResetFiveHourLimit / 100,
+			FiveHourLimit:   cfg.Routing.SoonestResetFiveHourLimit,
 			TieMargin:       parsePositiveDuration(cfg.Routing.SoonestResetTieMargin),
 			RefreshInterval: parsePositiveDuration(cfg.Routing.SoonestResetRefreshInterval),
 		}

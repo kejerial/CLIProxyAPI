@@ -626,10 +626,15 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 
 // availableAuthsForSelector reports the candidates handed to priority-scoped consumers such as
 // the plugin scheduler, plus the candidates handed to the configured selector. Both are equal
-// unless session affinity or an across-priorities scheduler is active, in which case the selector
-// or scheduler additionally receives lower priority tiers.
+// unless session affinity, soonest-reset, or an across-priorities scheduler is active, in which
+// case the selector or scheduler additionally receives lower priority tiers. Soonest-reset needs
+// them to skip a nearly full account without stalling on its tier.
 func (m *Manager) availableAuthsForSelector(selector Selector, auths []*Auth, provider, routeModel string, now time.Time, schedulerAcross bool) (priorityAuths, selectorAuths []*Auth, err error) {
-	_, sessionAffinity := selector.(*SessionAffinitySelector)
+	var sessionAffinity bool
+	switch selector.(type) {
+	case *SessionAffinitySelector, *SoonestResetSelector:
+		sessionAffinity = true
+	}
 
 	if !sessionAffinity && !schedulerAcross {
 		priorityAuths, err = m.availableAuthsForRouteModel(auths, provider, routeModel, now)

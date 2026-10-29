@@ -176,13 +176,17 @@ func TestQuotaProbeResponsesMatchResponseSnapshots(t *testing.T) {
 	if !claude.ObserveResponseHeadersForProvider("claude", claudeUsageProbeHeaders(claudeBody), soonestResetTestNow) {
 		t.Fatal("claude probe headers were not accepted as quota signals")
 	}
+	if got := claude.Signals["Anthropic-Ratelimit-Unified-Representative-Claim"]; got != "five_hour" {
+		t.Fatalf("claude representative claim = %q, want five_hour", got)
+	}
 	windows := soonestResetWindowsOf(&Auth{Provider: "claude", Quota: claude}, soonestResetTestNow)
 	if windows.fiveHourUsed != 0.95 || windows.weeklyUsed != 0.4 ||
 		!windows.weeklyReset.Equal(time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)) {
 		t.Fatalf("claude probe windows = %+v", windows)
 	}
 
-	codexBody := []byte(`{"plan_type":"plus","rate_limit":{"allowed":true,"limit_reached":false,` +
+	codexBody := []byte(`{"plan_type":"plus","credits":{"has_credits":true,"unlimited":false,"balance":"12.5"},` +
+		`"rate_limit":{"allowed":true,"limit_reached":false,` +
 		`"primary_window":{"used_percent":12,"limit_window_seconds":18000,"reset_after_seconds":3600,"reset_at":` +
 		strconv.FormatInt(soonestResetTestNow.Add(time.Hour).Unix(), 10) + `},` +
 		`"secondary_window":{"used_percent":55,"limit_window_seconds":604800,"reset_after_seconds":172800,"reset_at":` +
@@ -190,6 +194,13 @@ func TestQuotaProbeResponsesMatchResponseSnapshots(t *testing.T) {
 	var codex QuotaState
 	if !codex.ObserveResponseHeadersForProvider("codex", codexUsageProbeHeaders(codexBody), soonestResetTestNow) {
 		t.Fatal("codex probe headers were not accepted as quota signals")
+	}
+	for name, want := range map[string]string{
+		"X-Codex-Plan-Type": "plus", "X-Codex-Allowed": "True", "X-Codex-Credits-Unlimited": "False", "X-Codex-Credits-Balance": "12.5",
+	} {
+		if got := codex.Signals[name]; got != want {
+			t.Fatalf("codex %s = %q, want %q", name, got, want)
+		}
 	}
 	windows = soonestResetWindowsOf(&Auth{Provider: "codex", Quota: codex}, soonestResetTestNow)
 	if windows.fiveHourUsed != 0.12 || windows.weeklyUsed != 0.55 ||
@@ -273,6 +284,68 @@ func TestManagerSoonestResetSessionAffinity(t *testing.T) {
 				t.Fatalf("after A recovered = %q, want %q (moves only once)", got, b)
 			}
 		})
+	}
+}
+
+// TestManagerSoonestResetSkipsFullAccountAcrossPriorityTiers checks that a nearly full
+// account does not hold its priority tier, while priority still orders eligible accounts.
+func TestManagerSoonestResetSkipsFullAccountAcrossPriorityTiers(t *testing.T) {
+	ctx := context.Background()
+	model := "soonest-reset-priority-model"
+	manager := NewManager(nil, nil, nil)
+	manager.SetSelector(NewSoonestResetSelector(SoonestResetConfig{}))
+	manager.RegisterExecutor(schedulerTestExecutor{provider: "claude"})
+	high, low := "sr-priority-high", "sr-priority-low"
+	for _, auth := range []*Auth{
+		{ID: high, Provider: "claude", Status: StatusActive, Attributes: map[string]string{"priority": "1"}},
+		{ID: low, Provider: "claude", Status: StatusActive, Attributes: map[string]string{"priority": "0"}},
+	} {
+		if _, errRegister := manager.Register(WithSkipPersist(ctx), auth); errRegister != nil {
+			t.Fatalf("Register(%s): %v", auth.ID, errRegister)
+		}
+		registry.GetGlobalRegistry().RegisterClient(auth.ID, "claude", []*registry.ModelInfo{{ID: model}})
+		id := auth.ID
+		t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(id) })
+	}
+	now := time.Now()
+	setQuota := func(id string, fiveHourUsed float64) {
+		manager.mu.Lock()
+		defer manager.mu.Unlock()
+		manager.auths[id].Quota = claudeQuota(fiveHourUsed, now.Add(2*time.Hour), 0.5, now.Add(4*24*time.Hour))
+	}
+	pick := func() string {
+		t.Helper()
+		auth, _, errPick := manager.pickNext(ctx, "claude", model, cliproxyexecutor.Options{}, nil)
+		if errPick != nil {
+			t.Fatalf("pick: %v", errPick)
+		}
+		return auth.ID
+	}
+	setQuota(high, 0.1)
+	setQuota(low, 0.1)
+	if got := pick(); got != high {
+		t.Fatalf("both eligible = %q, want higher priority %q", got, high)
+	}
+	setQuota(high, 0.95)
+	if got := pick(); got != low {
+		t.Fatalf("high priority 5h full = %q, want %q", got, low)
+	}
+}
+
+func TestSoonestResetClaimProbeAllowsOneInFlight(t *testing.T) {
+	selector := NewSoonestResetSelector(SoonestResetConfig{})
+	if !selector.claimProbe("a", soonestResetTestNow, time.Minute) {
+		t.Fatal("first claim refused")
+	}
+	if selector.claimProbe("a", soonestResetTestNow.Add(time.Hour), time.Minute) {
+		t.Fatal("claim granted while a probe is in flight")
+	}
+	selector.releaseProbe("a")
+	if selector.claimProbe("a", soonestResetTestNow.Add(30*time.Second), time.Minute) {
+		t.Fatal("claim granted before the interval elapsed")
+	}
+	if !selector.claimProbe("a", soonestResetTestNow.Add(2*time.Minute), time.Minute) {
+		t.Fatal("claim refused after release and interval")
 	}
 }
 
